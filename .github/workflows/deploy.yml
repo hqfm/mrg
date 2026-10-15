@@ -1,0 +1,50 @@
+name: deploy
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"   # once a day, 03:17 UTC
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Purge links older than 3 days
+        if: github.event_name != 'push'
+        run: |
+          now=$(date +%s); removed=0
+          for d in */; do
+            d=${d%/}
+            [[ "$d" =~ ^[a-z2-9]{6,7}$ ]] || continue
+            ts=$(git log -1 --format=%ct -- "$d")
+            if [ $((now - ts)) -gt 259200 ]; then git rm -rq "$d"; removed=1; fi
+          done
+          if [ "$removed" = 1 ]; then
+            git config user.name "mirage-bot"; git config user.email "bot@cupx.in"
+            git commit -m "purge expired"
+            git pull --rebase origin main && git push origin HEAD:main || true
+          fi
+
+      - name: Build site
+        run: |
+          mkdir _site
+          rsync -a --exclude .git --exclude .github --exclude _site ./ _site/
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: _site }
+      - id: d
+        uses: actions/deploy-pages@v4
